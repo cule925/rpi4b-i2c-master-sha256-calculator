@@ -26,18 +26,20 @@ def generate_sha256():
     digest = hashlib.sha256(random_data).digest()
     return digest
 
-def send_i2c_payload(bus, address, offset, mask, digest):
+def send_i2c_payload(bus, address, offset, mask, digest, puzzle_id):
     payload = bytearray()
     payload.extend(offset.to_bytes(4, "little"))
     payload.extend(mask.to_bytes(1, "little"))
     payload.extend(digest)
+    payload.extend(puzzle_id.to_bytes(1, "little"))
 
-    assert len(payload) == 37
+    assert len(payload) == 38
 
+    # Sends 38 bytes to slave
     payload_msg = i2c_msg.write(address, payload)
     bus.i2c_rdwr(payload_msg)
 
-    print(f"I2C: written 37 bytes to {hex(address)}")
+    print(f"I2C: written 38 bytes to {hex(address)}")
 
 def wait_for_events(devices):
 
@@ -58,18 +60,17 @@ def wait_for_events(devices):
                         return dev
 
 def read_i2c_response(bus, address):
-    msg = i2c_msg.read(address, 4)
+    # Sends 5 bytes from slave
+    msg = i2c_msg.read(address, 5)
     bus.i2c_rdwr(msg)
 
     data = bytes(msg)
-    print(f"I2C: read 4 bytes from {hex(address)}")
+    print(f"I2C: read 5 bytes from {hex(address)}")
     return data
 
 def main():
     mask = SHA256_MASK
-    digest = generate_sha256()
-    print(f"Digest: {digest.hex()}")
-    print(f"Mask: {mask}")
+    puzzle_id = 0
 
     dev_1 = InputDevice(EVENT_DEVICE_1)
     dev_2 = InputDevice(EVENT_DEVICE_2)
@@ -80,18 +81,35 @@ def main():
 
     with SMBus(I2C_BUS) as bus:
 
-        for i, dev in enumerate(devices):
-            send_i2c_payload(bus, i2c_addresses[i], offsets[i], mask, digest)
-            time.sleep(0.001)
-
-        triggered_dev = wait_for_events(devices)
-        idx = devices.index(triggered_dev)
-        i2c_addr = i2c_addresses[idx]
-        value_bytes = read_i2c_response(bus, i2c_addr)
-        value = int.from_bytes(value_bytes, "little")
-        value_digest = hashlib.sha256(value_bytes).digest()
-        print(f"Device {triggered_dev.path} value: {value}")
-        print(f"Device {triggered_dev.path} value digest: {value_digest.hex()}")
+        while True:
+            print(f"\n< ========================= {puzzle_id} =========================>\n")
+            # Calculate a new digest
+            digest = generate_sha256()
+            print(f"Digest: {digest.hex()}")
+            print(f"Mask: {mask}")
+            # Send the inputs (the puzzle)
+            for i, dev in enumerate(devices):
+                send_i2c_payload(bus, i2c_addresses[i], offsets[i], mask, digest, puzzle_id)
+                time.sleep(0.001)
+            # Wait for a solution
+            while True:
+                triggered_dev = wait_for_events(devices)
+                # Read the solution from the corresponding device
+                idx = devices.index(triggered_dev)
+                i2c_addr = i2c_addresses[idx]
+                value_bytes = read_i2c_response(bus, i2c_addr)
+                # Get the puzzle ID
+                solution_puzzle_id = value_bytes[4]
+                # Compare the puzzle IDs
+                if puzzle_id == solution_puzzle_id:
+                    # Get the solution
+                    offset_solution = int.from_bytes(value_bytes[:4], "little")
+                    offset_solution_digest = hashlib.sha256(value_bytes[:4]).digest()
+                    print(f"Device {triggered_dev.path} offset solution: {offset_solution}")
+                    print(f"Device {triggered_dev.path} offset solution digest: {offset_solution_digest.hex()}")
+                    # Increase the puzzle ID and generate next puzzle
+                    puzzle_id = (puzzle_id + 1) & 0xFF
+                    break
 
 if __name__ == "__main__":
     main()

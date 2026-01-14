@@ -2,8 +2,9 @@
 # http://rptl.io/configtxt
 # Some settings may impact device functionality. See link above for details
 
-# Enable I2C
+# Enable I2C and set Baud rate to 400 kHz
 dtparam=i2c_arm=on
+dtparam=i2c_arm_baudrate=400000
 
 # Enable audio (loads snd_bcm2835)
 dtparam=audio=on
